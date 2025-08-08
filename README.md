@@ -32,8 +32,8 @@ Blazor Stripe Checkout is a modern web application built using Blazor. It provid
 ### Clone the Repository
 
 ````````
-git clone https://github.com/donpotts/BlazorProductsStripeCheckout.git
-cd BlazorProductsStripeCheckout
+git clone https://github.com/donpotts/BlazorStripeCheckout.git
+cd BlazorStripeCheckout
 ````````
 
 ### Configuration
@@ -59,7 +59,7 @@ Example configuration:
 ## Usage
 
 ### Product Management
-- Navigate to the **Products** section to add, update, or view products.
+- Navigate to the **Products Admin** section to add, update, or view products.
 
 ### User Management
 - Navigate to the **Users** section to manage user information.
