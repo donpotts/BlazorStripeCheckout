@@ -1,0 +1,88 @@
+@page "/success"
+@using Stripe.Checkout
+@using MudBlazor
+@inject BlazorStripeCheckout.Shared.Blazor.Services.CartService cartService
+@inject NavigationManager NavigationManager
+<PageTitle>Payment Success</PageTitle>
+
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-body text-center">
+                    <div class="text-success mb-4">
+                        <i class="display-1">✅</i>
+                    </div>
+                    <h2 class="text-success mb-3">Payment Successful!</h2>
+                    <p class="text-muted mb-4">Thank you for your purchase. Your payment has been processed successfully.</p>
+                    
+                    @if (!string.IsNullOrEmpty(sessionId))
+                    {
+                        <div class="alert alert-info">
+                            <small><strong>Session ID:</strong> @sessionId</small>
+                        </div>
+                    }
+
+                    @if (sessionDetails != null)
+                    {
+                        <div class="row text-start">
+                            <div class="col-md-6">
+                                <h6>Payment Details:</h6>
+                                <p><strong>Amount:</strong> $@((sessionDetails.AmountTotal ?? 0) / 100.0)</p>
+                                <p><strong>Status:</strong> @sessionDetails.PaymentStatus</p>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Customer:</h6>
+                                <p><strong>Email:</strong> @sessionDetails.CustomerDetails?.Email</p>
+                            </div>
+                        </div>
+                    }
+
+                    <div class="mt-4">
+                        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="ClearCartAndNavigate">
+                            Continue Shopping
+                        </MudButton>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery] public string? session_id { get; set; }
+    
+    private string sessionId = "";
+    private Session? sessionDetails;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!string.IsNullOrEmpty(session_id))
+        {
+            sessionId = session_id;
+            
+            try
+            {
+                var service = new SessionService();
+                sessionDetails = await service.GetAsync(session_id);
+
+                // Clear the cart after successful payment
+                if (sessionDetails != null && sessionDetails.PaymentStatus == "paid")
+                {
+                    cartService.ClearCartAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log error, but don't break the success page
+                Console.WriteLine($"Error fetching session details: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task ClearCartAndNavigate()
+    {
+        await cartService.ClearCartAsync();
+        NavigationManager.NavigateTo("/cardproducts");
+    }
+}

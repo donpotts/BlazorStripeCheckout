@@ -1,0 +1,318 @@
+@page "/cardproducts"
+@inject AppService AppService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject HttpClient HttpClient
+@inject IJSRuntime JSRuntime
+@inject IStorageService StorageService
+@inject BlazorStripeCheckout.Shared.Blazor.Services.CartService CartService
+@attribute [Authorize]
+@using BlazorStripeCheckout.Shared.Blazor.Models
+<PageTitle>Products</PageTitle>
+
+<div class="mb-3">
+    <MudText Typo="Typo.h3">Products</MudText>
+</div>
+
+<MudStack AlignItems="AlignItems.End" Class="mb-3">
+    <MudToolBar>
+         <MudSpacer />
+         <MudTextField T="string" Placeholder="Search" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0" Immediate="true" ValueChanged="@(value => SearchChanged(value))"></MudTextField>
+         <MudButton Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.AddCircleOutline" Color="Color.Primary" OnClick="@(e => OnAdd())">Add</MudButton>
+         <MudButton Color="Color.Primary" StartIcon="@Icons.Material.Filled.SaveAlt" OnClick="ExportAllToCSV">Export</MudButton>
+    </MudToolBar>
+</MudStack>
+
+<!-- Begin cards -->
+@if (ProductsResult != null)
+{
+    @* <MudText Class="mt-6 mb-3" Typo="Typo.h5">Cards</MudText> *@
+    <MudGrid Class="mb-3">
+        @foreach (var Products in ProductsResult.Value ?? Enumerable.Empty<Products>())
+        {
+            var thisProducts = Products;
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudCard Class="d-flex flex-column mud-height-full custom-card">
+                    @if (!string.IsNullOrEmpty(Products.Photo))
+                    {
+                        <MudCardMedia Image="@GetAbsoluteUri(Products.Photo)" Style="height: 200px;" Class="card-image"  />
+                    }
+    
+                    <MudCardContent>
+                        <MudText Typo="Typo.body2"><strong>Name:</strong> @Products.Name</MudText>
+                        <MudText Typo="Typo.body2"><strong>Description:</strong> @Products.Description</MudText>
+                        <MudText Typo="Typo.body2"><strong>Price:</strong> @Products.Price</MudText>
+                        <MudText Typo="Typo.body2"><strong>Notes:</strong> @Products.Notes</MudText>
+                    </MudCardContent>
+
+                    <MudCardActions Class="mt-auto d-flex mb-3 justify-center">
+                        <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.AddShoppingCart" OnClick="@(e => AddToCart(thisProducts))">
+                            Add to Cart
+                        </MudButton>
+                    </MudCardActions>
+                </MudCard>
+
+            </MudItem>
+        }
+    </MudGrid>
+
+    <div class="d-flex align-center justify-center mb-3">
+        <MudPagination Color="Color.Primary" Count="pageCount" Selected="selectedPage" SelectedChanged="OnSelectedChangedAsync" />
+    </div>
+}
+
+<!-- Checkout Dialog -->
+<MudDialog @bind-IsOpen="showCheckoutDialog">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Cart Items</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (CartService.CartItems.Count == 0)
+        {
+            <MudText>No items in cart.</MudText>
+        }
+        else
+        {
+            <MudTable Items="CartService.CartItems">
+                <HeaderContent>
+                    <MudTh>Product</MudTh>
+                    <MudTh>Price</MudTh>
+                    <MudTh>Quantity</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Name</MudTd>
+                    <MudTd>@context.Price</MudTd>
+                    <MudTd>@context.Quantity</MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseCheckout">Close</MudButton>
+        <MudButton Color="Color.Primary" Disabled="@(CartService.CartItems.Count == 0)">Checkout</MudButton>
+    </DialogActions>
+</MudDialog>
+<!-- End cards -->
+
+<script>
+    window.downloadFromBase64 = function (base64, filename) {
+        var a = document.createElement("a");
+        document.body.appendChild(a);
+        a.style = "display: none";
+        var byteCharacters = atob(base64);
+        var byteNumbers = new Array(byteCharacters.length);
+        for (var i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        var byteArray = new Uint8Array(byteNumbers);
+        var blob = new Blob([byteArray], { type: "application/octet-stream" });
+        var url = window.URL.createObjectURL(blob);
+        a.href = url;
+        a.download = filename;
+        a.click();
+        window.URL.revokeObjectURL(url);
+    };
+</script>
+
+@code {
+    // Begin cards
+     private const int PageSize = 10;
+     private AppService.ODataResult<Products>? ProductsResult;
+     private int pageCount = 1;
+     private int selectedPage = 1;
+     private string? _searchString;
+
+    // Cart logic
+    private const string CartStorageKey = "cart_products";
+    private bool showCheckoutDialog = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CartService.InitializeAsync(); // Load cart items from storage on initialization
+        await ReloadDataAsync();
+    }
+
+    private async Task OnSelectedChangedAsync(int selected)
+    {
+        selectedPage = selected;
+        await ReloadDataAsync();
+    }
+
+    private async Task ReloadDataAsync()
+    {
+        var orderby = "";
+        var filter = "";
+
+        AppService.ODataResult<Products>? result = null;    
+        
+        try
+        {
+            if (_searchString?.Length > 0)
+            {
+                bool isNumeric = double.TryParse(_searchString, out _);
+                bool isDateTime = DateTime.TryParse(_searchString, out _);
+
+                if (isNumeric)
+                {
+                    filter = $"Id eq {_searchString} or ProductCategoryId eq {_searchString} or Price eq {_searchString} or StockQuantity eq {_searchString}";
+                }
+                else if (isDateTime)
+                {
+                    filter = $"";
+                }
+                else
+                {
+                    filter = $"contains(tolower(Name), '{_searchString}') or contains(tolower(Description), '{_searchString}') or contains(tolower(Photo), '{_searchString}') or contains(tolower(Notes), '{_searchString}') ";
+                }
+            }
+            var skip = (selectedPage - 1) * PageSize;
+
+            ProductsResult = await AppService.ListProductsODataAsync(PageSize, skip, orderby, filter, count: true, null);
+
+            if (ProductsResult?.Count.HasValue ?? false)
+            {
+                pageCount = (int)Math.Ceiling((double)ProductsResult.Count.Value / PageSize);
+            }
+            else
+            {
+                pageCount = 1;
+            }
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+    // End cards
+
+    private string GetAbsoluteUri(string uri)
+    {
+        if (!uri.StartsWith("/"))
+        {
+            return uri;
+        }
+
+        var baseUri = HttpClient.BaseAddress;
+
+        if (baseUri == null)
+        {
+            throw new Exception("Unable to determine base address");
+        }
+
+        Uri absolute = new(baseUri, uri);
+
+        return absolute.ToString();
+    }
+
+    private async void OnAdd()
+    {
+        DialogOptions dialogOptions = new() { FullWidth = true, CloseOnEscapeKey = true };
+
+        var result = await DialogService.Show<AddProducts>("Add Products", dialogOptions).Result;
+
+        if (result != null && !result.Canceled)
+        {
+            await ReloadDataAsync();
+        }
+    }
+
+    private async void SearchChanged(string Value)
+    {
+        if (Value.EndsWith("."))
+        {
+            return;
+        }
+        _searchString = Value.ToString().ToLower();
+        try
+        {
+            if (_searchString.Length > 18)
+            {
+                DateTimeOffset dateTime = DateTime.Parse(_searchString);
+                _searchString = dateTime.ToString("yyyy-MM-ddTHH:mm:ssK");
+            }
+        }
+        catch
+        {
+            return;
+        }
+        await ReloadDataAsync();
+    }
+
+    private async Task ExportAllToCSV()
+    {
+        AppService.ODataResult<Products>? result = null;
+
+        try
+        {
+            // Fetch all data from the OData service without any filters or restrictions
+            result = await AppService.ListProductsODataAsync(null, null, null, null, true, null);
+
+            if (result != null && result?.Value != null)
+            {
+                var ar = result?.Value.ToList().Select(x => new
+                {
+                    x.Id,
+                    x.ProductCategoryId,
+                    x.Name,
+                    x.Description,
+                    x.Price,
+                    x.StockQuantity,
+                    x.Photo,
+                    x.Notes,
+                });
+
+                using var memoryStream = new MemoryStream();
+                using (var writer = new StreamWriter(memoryStream))
+                using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
+                {
+                    csv.WriteRecords(ar); // use CSVHelper to write the records to the CSV file
+                }
+                // Convert MemoryStream to ByteArray
+                var byteArray = memoryStream.ToArray();
+
+                // Convert ByteArray to Base64String
+                var base64 = Convert.ToBase64String(byteArray);
+
+                // Trigger file download
+                await JSRuntime.InvokeVoidAsync("downloadFromBase64", base64, "Products_"+ System.DateTime.Now.ToString("yyyyMMddHHmmss") +".csv");
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    // Cart methods
+    private async Task AddToCart(Products product)
+    {
+        await CartService.AddToCartAsync(new BlazorStripeCheckout.Shared.Blazor.Services.CartProduct
+        {
+            Id = product.Id,
+            Name = product.Name,
+            Description = product.Description,
+            Price = product.Price,
+            Quantity = 1
+        });
+        StateHasChanged();
+    }
+
+    private async Task ShowCheckout()
+    {
+        await CartService.ReloadCartAsync(); // Load cart items from storage before showing checkout
+        showCheckoutDialog = true;
+        StateHasChanged();
+    }
+
+    private void CloseCheckout()
+    {
+        showCheckoutDialog = false;
+    }
+
+    private async Task ClearCart()
+    {
+        await CartService.ClearCartAsync();
+        StateHasChanged();
+    }
+}
